@@ -4,7 +4,7 @@ dotenv.config();
 import express from 'express';
 import cors from 'cors';
 import mongoose from 'mongoose';
-import WalletRoutes from './walletRoutes/add.js';
+import WalletRoutes from './WalletRoutes/add.js';
 import authRoutes from './routes/auth.js';
 
 const app = express();
