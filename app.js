@@ -36,5 +36,12 @@ mongoose.connect(process.env.MONGO_URI, {
   console.error('❌ MongoDB connection error:', err);
   process.exit(1); // Stop the app if DB fails
 });
+app.get('/', (req, res) => {
+  res.status(200).json({
+    status: 'success',
+    message: '✅ Server is running!',
+    time: new Date().toISOString()
+  });
+});
 
 export default app;
