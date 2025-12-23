@@ -1,5 +1,5 @@
 import dotenv from 'dotenv';
-dotenv.config(); // must be first
+dotenv.config();
 
 import express from 'express';
 import cors from 'cors';
@@ -17,31 +17,37 @@ app.use(express.json());
 app.use('/api/auth', authRoutes);
 app.use('/api/add', WalletRoutes);
 
-const PORT = process.env.PORT || 5000;
-
-// MongoDB connection
-mongoose.connect(process.env.MONGO_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-})
-.then(() => {
-  console.log('✅ MongoDB connected');
-
-  // Start server AFTER DB connection
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on port ${PORT}`);
-  });
-})
-.catch(err => {
-  console.error('❌ MongoDB connection error:', err);
-  process.exit(1); // Stop the app if DB fails
-});
+// Root route
 app.get('/', (req, res) => {
   res.status(200).json({
     status: 'success',
-    message: '✅ Server is runnings!',
+    message: '✅ Server is running!',
     time: new Date().toISOString()
   });
 });
+
+const PORT = process.env.PORT || 5000;
+
+// Debug: Check if MONGO_URI exists
+if (!process.env.MONGO_URI) {
+  console.error('❌ MONGO_URI not found in environment variables!');
+  process.exit(1);
+}
+
+console.log('🔄 Connecting to MongoDB...');
+
+// MongoDB connection (removed deprecated options)
+mongoose.connect(process.env.MONGO_URI)
+  .then(() => {
+    console.log('✅ MongoDB connected');
+    
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`✅ Server running on port ${PORT}`);
+    });
+  })
+  .catch(err => {
+    console.error('❌ MongoDB connection error:', err.message);
+    process.exit(1);
+  });
 
 export default app;
