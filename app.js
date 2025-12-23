@@ -39,7 +39,7 @@ mongoose.connect(process.env.MONGO_URI, {
 app.get('/', (req, res) => {
   res.status(200).json({
     status: 'success',
-    message: '✅ Server is running!',
+    message: '✅ Server is runnings!',
     time: new Date().toISOString()
   });
 });
