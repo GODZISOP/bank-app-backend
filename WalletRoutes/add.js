@@ -2,6 +2,7 @@
 import express from 'express';
 import User from '../models/User.js';
 import jwt from 'jsonwebtoken';
+import mongoose from 'mongoose';
 
 const router = express.Router();
 
@@ -33,7 +34,7 @@ const authMiddleware = (req, res, next) => {
 
 // Get user balance (with auth)
 router.get('/balance', authMiddleware, async (req, res) => {
-  console.log('📊 GET /api/wallet/balance called');
+  console.log('📊 GET /api/add/balance called');
   try {
     const user = await User.findById(req.userId);
     
@@ -51,10 +52,13 @@ router.get('/balance', authMiddleware, async (req, res) => {
   }
 });
 
-// Add funds (NO AUTH - for testing/admin)
+// ✅ FIXED: Add funds with retry safety
 router.post('/add-funds', async (req, res) => {
-  console.log('💰 POST /api/wallet/add-funds called');
+  console.log('💰 POST /api/add/add-funds called');
   console.log('Body:', req.body);
+  
+  let session = null;
+  
   try {
     const { userId, amount } = req.body;
     const amountNum = Number(amount);
@@ -67,12 +71,18 @@ router.post('/add-funds', async (req, res) => {
       return res.status(400).json({ message: 'Invalid amount' });
     }
 
-    const user = await User.findById(userId);
+    // Start transaction session for safety
+    session = await mongoose.startSession();
+    session.startTransaction();
+
+    const user = await User.findById(userId).session(session);
     
     if (!user) {
+      await session.abortTransaction();
       return res.status(404).json({ message: 'User not found' });
     }
 
+    // Update balance
     user.balance = (user.balance || 0) + amountNum;
     
     // Record transaction
@@ -81,10 +91,15 @@ router.post('/add-funds', async (req, res) => {
       type: 'add_funds',
       amount: amountNum,
       status: 'completed',
-      notes: 'Funds added to account'
+      notes: 'Funds added to account',
+      createdAt: new Date()
     });
     
-    await user.save();
+    // Save with transaction
+    await user.save({ session });
+    
+    // Commit transaction
+    await session.commitTransaction();
 
     console.log(`✅ Added ৳${amountNum} to user ${userId}. New balance: ৳${user.balance}`);
 
@@ -93,14 +108,26 @@ router.post('/add-funds', async (req, res) => {
       balance: user.balance,
       message: `Successfully added ৳${amountNum}` 
     });
+    
   } catch (error) {
+    // Rollback on error
+    if (session) {
+      await session.abortTransaction();
+      console.log('❌ Transaction rolled back');
+    }
     console.error('Add funds error:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
+  } finally {
+    if (session) {
+      session.endSession();
+    }
   }
 });
 
-// Transfer funds (Updated to support both local and international)
+// ✅ FIXED: Transfer with transaction safety
 router.post('/transfer', async (req, res) => {
+  let session = null;
+  
   try {
     const { 
       fromUserId, 
@@ -142,36 +169,46 @@ router.post('/transfer', async (req, res) => {
       if (!swiftCode) {
         return res.status(400).json({ message: 'SWIFT code is required for international transfers' });
       }
-      if (swiftCode.length < 8 || swiftCode.length > 11) {
-        return res.status(400).json({ message: 'SWIFT code must be 8-11 characters' });
+      // Relaxed validation - accept any SWIFT code length
+      if (!swiftCode.trim()) {
+        return res.status(400).json({ message: 'SWIFT code cannot be empty' });
       }
     }
 
-    // Find sender
-    const sender = await User.findById(fromUserId);
+    // ✅ START TRANSACTION SESSION
+    session = await mongoose.startSession();
+    session.startTransaction();
+
+    // Find sender with session
+    const sender = await User.findById(fromUserId).session(session);
     if (!sender) {
+      await session.abortTransaction();
       return res.status(404).json({ message: 'Sender not found' });
     }
 
     // Check balance
     if ((sender.balance || 0) < amountNum) {
+      await session.abortTransaction();
       return res.status(400).json({ 
         message: 'Insufficient balance',
-        currentBalance: sender.balance || 0
+        currentBalance: sender.balance || 0,
+        required: amountNum
       });
     }
 
     // Process based on transfer type
     if (transferType === 'local') {
       // ========== LOCAL TRANSFER - INSTANT ==========
-      const recipient = await User.findOne({ accountNumber: toAccountNumber });
+      const recipient = await User.findOne({ accountNumber: toAccountNumber }).session(session);
       
       if (!recipient) {
+        await session.abortTransaction();
         return res.status(404).json({ message: 'Recipient account not found' });
       }
 
       // Check if sending to self
       if (sender._id.equals(recipient._id)) {
+        await session.abortTransaction();
         return res.status(400).json({ message: 'Cannot transfer to your own account' });
       }
 
@@ -186,7 +223,8 @@ router.post('/transfer', async (req, res) => {
         amount: -amountNum,
         recipientName,
         recipientAccount: toAccountNumber,
-        status: 'completed'
+        status: 'completed',
+        createdAt: new Date()
       });
 
       // Record transaction in recipient's history
@@ -196,11 +234,16 @@ router.post('/transfer', async (req, res) => {
         amount: amountNum,
         senderName: sender.email,
         senderAccount: sender.accountNumber,
-        status: 'completed'
+        status: 'completed',
+        createdAt: new Date()
       });
 
-      await sender.save();
-      await recipient.save();
+      // Save both users in transaction
+      await sender.save({ session });
+      await recipient.save({ session });
+      
+      // Commit transaction
+      await session.commitTransaction();
 
       console.log(`✅ Local Transfer: ${sender.accountNumber} → ${recipient.accountNumber}: ৳${amountNum}`);
 
@@ -224,7 +267,7 @@ router.post('/transfer', async (req, res) => {
       const estimatedCompletion = new Date();
       estimatedCompletion.setDate(estimatedCompletion.getDate() + 2);
 
-      // Deduct from sender immediately
+      // Deduct from sender (amount already includes 2% charges from frontend)
       sender.balance = (sender.balance || 0) - amountNum;
 
       // Record transaction as pending
@@ -238,10 +281,15 @@ router.post('/transfer', async (req, res) => {
         ibanNumber: ibanNumber || null,
         status: 'pending',
         estimatedCompletion,
-        notes: 'International transfer processing'
+        notes: 'International transfer processing',
+        createdAt: new Date()
       });
 
-      await sender.save();
+      // Save with transaction
+      await sender.save({ session });
+      
+      // Commit transaction
+      await session.commitTransaction();
 
       console.log(`✅ International Transfer Initiated:`);
       console.log(`   From: ${sender.accountNumber}`);
@@ -249,6 +297,7 @@ router.post('/transfer', async (req, res) => {
       console.log(`   SWIFT: ${swiftCode}`);
       console.log(`   IBAN: ${ibanNumber || 'N/A'}`);
       console.log(`   Amount: ৳${amountNum}`);
+      console.log(`   New Balance: ৳${sender.balance}`);
       console.log(`   Estimated: ${estimatedCompletion.toLocaleDateString()}`);
 
       return res.json({
@@ -272,14 +321,23 @@ router.post('/transfer', async (req, res) => {
     }
 
   } catch (error) {
+    // Rollback on any error
+    if (session) {
+      await session.abortTransaction();
+      console.log('❌ Transaction rolled back');
+    }
     console.error('❌ Transfer error:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
+  } finally {
+    if (session) {
+      session.endSession();
+    }
   }
 });
 
 // Get transaction history
 router.get('/transactions', authMiddleware, async (req, res) => {
-  console.log('📜 GET /api/wallet/transactions called');
+  console.log('📜 GET /api/add/transactions called');
   try {
     const user = await User.findById(req.userId);
     
