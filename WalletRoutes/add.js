@@ -16,14 +16,14 @@ const authMiddleware = (req, res, next) => {
       return res.status(401).json({ message: 'No token provided' });
     }
 
-    const token = authHeader.split(' ')[1]; // Extract token from "Bearer TOKEN"
+    const token = authHeader.split(' ')[1];
     
     if (!token) {
       return res.status(401).json({ message: 'Invalid token format' });
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.userId = decoded.id || decoded._id; // Support both id and _id
+    req.userId = decoded.id || decoded._id;
     next();
   } catch (error) {
     console.error('Auth error:', error);
@@ -74,6 +74,16 @@ router.post('/add-funds', async (req, res) => {
     }
 
     user.balance = (user.balance || 0) + amountNum;
+    
+    // Record transaction
+    user.transactions = user.transactions || [];
+    user.transactions.push({
+      type: 'add_funds',
+      amount: amountNum,
+      status: 'completed',
+      notes: 'Funds added to account'
+    });
+    
     await user.save();
 
     console.log(`✅ Added ৳${amountNum} to user ${userId}. New balance: ৳${user.balance}`);
@@ -89,19 +99,52 @@ router.post('/add-funds', async (req, res) => {
   }
 });
 
-// Transfer funds (NO AUTH - uses fromUserId in body)
+// Transfer funds (Updated to support both local and international)
 router.post('/transfer', async (req, res) => {
   try {
-    const { fromUserId, toAccountNumber, amount } = req.body;
+    const { 
+      fromUserId, 
+      toAccountNumber, 
+      amount,
+      transferType = 'local',
+      recipientName,
+      swiftCode,
+      ibanNumber
+    } = req.body;
+    
     const amountNum = Number(amount);
 
-    // Validation
+    console.log('💸 Transfer request:', {
+      type: transferType,
+      from: fromUserId,
+      to: toAccountNumber,
+      amount: amountNum,
+      recipientName,
+      swiftCode: swiftCode ? '✓' : '✗',
+      ibanNumber: ibanNumber ? '✓' : '✗'
+    });
+
+    // Basic validation
     if (!fromUserId || !toAccountNumber || !amountNum) {
       return res.status(400).json({ message: 'All fields are required' });
     }
 
+    if (!recipientName) {
+      return res.status(400).json({ message: 'Recipient name is required' });
+    }
+
     if (amountNum <= 0) {
       return res.status(400).json({ message: 'Amount must be greater than 0' });
+    }
+
+    // International transfer validation
+    if (transferType === 'international') {
+      if (!swiftCode) {
+        return res.status(400).json({ message: 'SWIFT code is required for international transfers' });
+      }
+      if (swiftCode.length < 8 || swiftCode.length > 11) {
+        return res.status(400).json({ message: 'SWIFT code must be 8-11 characters' });
+      }
     }
 
     // Find sender
@@ -118,40 +161,145 @@ router.post('/transfer', async (req, res) => {
       });
     }
 
-    // Find recipient by account number
-    const recipient = await User.findOne({ accountNumber: toAccountNumber });
-    if (!recipient) {
-      return res.status(404).json({ message: 'Recipient account not found' });
-    }
-
-    // Check if sending to self
-    if (sender._id.equals(recipient._id)) {
-      return res.status(400).json({ message: 'Cannot transfer to your own account' });
-    }
-
-    // Perform transfer
-    sender.balance = (sender.balance || 0) - amountNum;
-    recipient.balance = (recipient.balance || 0) + amountNum;
-
-    await sender.save();
-    await recipient.save();
-
-    console.log(`✅ Transfer: ${sender.accountNumber} → ${recipient.accountNumber}: ৳${amountNum}`);
-
-    res.json({
-      success: true,
-      message: 'Transfer successful',
-      senderBalance: sender.balance,
-      recipientBalance: recipient.balance,
-      transactionDetails: {
-        from: sender.accountNumber,
-        to: recipient.accountNumber,
-        amount: amountNum
+    // Process based on transfer type
+    if (transferType === 'local') {
+      // ========== LOCAL TRANSFER - INSTANT ==========
+      const recipient = await User.findOne({ accountNumber: toAccountNumber });
+      
+      if (!recipient) {
+        return res.status(404).json({ message: 'Recipient account not found' });
       }
+
+      // Check if sending to self
+      if (sender._id.equals(recipient._id)) {
+        return res.status(400).json({ message: 'Cannot transfer to your own account' });
+      }
+
+      // Perform instant transfer
+      sender.balance = (sender.balance || 0) - amountNum;
+      recipient.balance = (recipient.balance || 0) + amountNum;
+
+      // Record transaction in sender's history
+      sender.transactions = sender.transactions || [];
+      sender.transactions.push({
+        type: 'local',
+        amount: -amountNum,
+        recipientName,
+        recipientAccount: toAccountNumber,
+        status: 'completed'
+      });
+
+      // Record transaction in recipient's history
+      recipient.transactions = recipient.transactions || [];
+      recipient.transactions.push({
+        type: 'received',
+        amount: amountNum,
+        senderName: sender.email,
+        senderAccount: sender.accountNumber,
+        status: 'completed'
+      });
+
+      await sender.save();
+      await recipient.save();
+
+      console.log(`✅ Local Transfer: ${sender.accountNumber} → ${recipient.accountNumber}: ৳${amountNum}`);
+
+      return res.json({
+        success: true,
+        message: 'Transfer successful',
+        transferType: 'local',
+        senderBalance: sender.balance,
+        transactionDetails: {
+          from: sender.accountNumber,
+          to: recipient.accountNumber,
+          recipientName,
+          amount: amountNum,
+          status: 'completed',
+          timestamp: new Date().toISOString()
+        }
+      });
+
+    } else {
+      // ========== INTERNATIONAL TRANSFER - PENDING ==========
+      const estimatedCompletion = new Date();
+      estimatedCompletion.setDate(estimatedCompletion.getDate() + 2);
+
+      // Deduct from sender immediately
+      sender.balance = (sender.balance || 0) - amountNum;
+
+      // Record transaction as pending
+      sender.transactions = sender.transactions || [];
+      sender.transactions.push({
+        type: 'international',
+        amount: -amountNum,
+        recipientName,
+        recipientAccount: toAccountNumber,
+        swiftCode,
+        ibanNumber: ibanNumber || null,
+        status: 'pending',
+        estimatedCompletion,
+        notes: 'International transfer processing'
+      });
+
+      await sender.save();
+
+      console.log(`✅ International Transfer Initiated:`);
+      console.log(`   From: ${sender.accountNumber}`);
+      console.log(`   To: ${toAccountNumber}`);
+      console.log(`   SWIFT: ${swiftCode}`);
+      console.log(`   IBAN: ${ibanNumber || 'N/A'}`);
+      console.log(`   Amount: ৳${amountNum}`);
+      console.log(`   Estimated: ${estimatedCompletion.toLocaleDateString()}`);
+
+      return res.json({
+        success: true,
+        message: 'International transfer initiated successfully',
+        transferType: 'international',
+        senderBalance: sender.balance,
+        transactionDetails: {
+          from: sender.accountNumber,
+          to: toAccountNumber,
+          recipientName,
+          amount: amountNum,
+          swiftCode,
+          ibanNumber: ibanNumber || null,
+          status: 'pending',
+          estimatedCompletion: estimatedCompletion.toISOString(),
+          timestamp: new Date().toISOString(),
+          note: 'Transfer typically completes in 1-3 business days'
+        }
+      });
+    }
+
+  } catch (error) {
+    console.error('❌ Transfer error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Get transaction history
+router.get('/transactions', authMiddleware, async (req, res) => {
+  console.log('📜 GET /api/wallet/transactions called');
+  try {
+    const user = await User.findById(req.userId);
+    
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    // Sort transactions by date (newest first)
+    const transactions = (user.transactions || []).sort((a, b) => 
+      new Date(b.createdAt) - new Date(a.createdAt)
+    );
+    
+    res.json({ 
+      success: true,
+      transactions,
+      count: transactions.length
     });
   } catch (error) {
-    console.error('Transfer error:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
+    console.error('Get transactions error:', error);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 

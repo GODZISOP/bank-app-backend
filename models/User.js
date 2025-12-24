@@ -2,6 +2,36 @@
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
 
+// Transaction Schema for storing transaction history
+const transactionSchema = new mongoose.Schema({
+  type: {
+    type: String,
+    enum: ['local', 'international', 'add_funds', 'received'],
+    required: true
+  },
+  amount: {
+    type: Number,
+    required: true
+  },
+  recipientName: String,
+  recipientAccount: String,
+  senderName: String,
+  senderAccount: String,
+  swiftCode: String,
+  ibanNumber: String,
+  status: {
+    type: String,
+    enum: ['completed', 'pending', 'failed'],
+    default: 'completed'
+  },
+  estimatedCompletion: Date,
+  createdAt: {
+    type: Date,
+    default: Date.now
+  },
+  notes: String
+});
+
 const userSchema = new mongoose.Schema(
   {
     email: { type: String, required: true, unique: true },
@@ -17,12 +47,10 @@ const userSchema = new mongoose.Schema(
     salary: String,
     balance: { type: Number, default: 0 },
     accountNumber: { type: String, unique: true },
+    transactions: [transactionSchema], // NEW: Transaction history
   },
   { timestamps: true }
 );
-
-// REMOVED THE PRE-SAVE HOOK - We're hashing in the route instead
-// This prevents double hashing
 
 // Generate account number before saving (only if it doesn't exist)
 userSchema.pre('save', async function (next) {
@@ -33,7 +61,7 @@ userSchema.pre('save', async function (next) {
   next();
 });
 
-// Compare password method (you can use this in routes instead of bcrypt.compare directly)
+// Compare password method
 userSchema.methods.comparePassword = async function (candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.password);
 };
