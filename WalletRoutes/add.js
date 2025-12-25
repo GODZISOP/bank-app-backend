@@ -409,7 +409,7 @@ router.post('/add-funds', async (req, res) => {
       await session.abortTransaction();
     }
     console.error('Add funds error:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(500).json({ message: 'Server errorr', error: error.message });
   } finally {
     if (session) {
       session.endSession();
