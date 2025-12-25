@@ -313,20 +313,21 @@ router.post('/verify-otp', async (req, res) => {
 });
 
 // ✅ Add funds with OTP verification
+// ✅ Add funds with OTP verification (combined)
 router.post('/add-funds', async (req, res) => {
   console.log('💰 POST /api/add/add-funds called');
   
   let session = null;
   
   try {
-    const { userId, amount, otpKey } = req.body;
+    const { userId, amount, otpKey, otp } = req.body;
     const amountNum = Number(amount);
 
     if (!userId) {
       return res.status(400).json({ message: 'User ID is required' });
     }
 
-    if (!otpKey) {
+    if (!otpKey || !otp) {
       return res.status(400).json({ message: 'OTP verification required' });
     }
 
@@ -334,14 +335,42 @@ router.post('/add-funds', async (req, res) => {
       return res.status(400).json({ message: 'Invalid amount' });
     }
 
-    // Verify OTP key exists
+    // Verify OTP
     const otpData = otpStore.get(otpKey);
-    if (!otpData || otpData.userId !== userId) {
+    
+    if (!otpData) {
+      console.log('❌ OTP key not found:', otpKey);
+      console.log('Available keys:', Array.from(otpStore.keys()));
+      return res.status(401).json({ 
+        message: 'OTP session expired. Please request a new OTP.',
+        expired: true 
+      });
+    }
+
+    if (otpData.userId !== userId) {
       return res.status(401).json({ message: 'OTP verification failed' });
     }
 
-    // Delete OTP after use
+    // Check expiry
+    if (Date.now() > otpData.expiresAt) {
+      otpStore.delete(otpKey);
+      return res.status(401).json({ 
+        message: 'OTP has expired',
+        expired: true 
+      });
+    }
+
+    // Verify OTP code
+    if (otpData.otp !== otp.toString()) {
+      return res.status(401).json({ 
+        message: 'Invalid OTP code',
+        expired: false 
+      });
+    }
+
+    // OTP verified, delete it
     otpStore.delete(otpKey);
+    console.log('✅ OTP verified successfully');
 
     session = await mongoose.startSession();
     session.startTransaction();
