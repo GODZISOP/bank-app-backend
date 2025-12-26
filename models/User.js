@@ -47,17 +47,24 @@ const userSchema = new mongoose.Schema(
     salary: String,
     balance: { type: Number, default: 0 },
     accountNumber: { type: String, unique: true },
-    transactions: [transactionSchema], // NEW: Transaction history
+    cardNumber: { type: String, required: true, unique: true }, // Required field
+    transactions: [transactionSchema],
   },
   { timestamps: true }
 );
 
-// Generate account number before saving (only if it doesn't exist)
+// Generate account number and card number before saving
 userSchema.pre('save', async function (next) {
-  // Only generate account number, do NOT hash password here
+  // Only generate account number if it doesn't exist
   if (!this.accountNumber) {
     this.accountNumber = generateAccountNumber();
   }
+  
+  // Only generate card number if it doesn't exist
+  if (!this.cardNumber) {
+    this.cardNumber = generateCardNumber();
+  }
+  
   next();
 });
 
@@ -79,6 +86,17 @@ function generateAccountNumber() {
     ' ' +
     Math.floor(100000 + Math.random() * 900000)
   );
+}
+
+// Helper function to generate realistic card number
+function generateCardNumber() {
+  // Example format: 1784 3510 0008 4859 (16 digits)
+  const firstGroup = Math.floor(1000 + Math.random() * 9000); // 4 digits starting with 1-9
+  const secondGroup = Math.floor(1000 + Math.random() * 9000); // 4 digits
+  const thirdGroup = Math.floor(1000 + Math.random() * 9000); // 4 digits
+  const fourthGroup = Math.floor(1000 + Math.random() * 9000); // 4 digits
+  
+  return `${firstGroup} ${secondGroup} ${thirdGroup} ${fourthGroup}`;
 }
 
 export default mongoose.model('User', userSchema);

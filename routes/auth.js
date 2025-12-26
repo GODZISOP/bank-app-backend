@@ -14,6 +14,7 @@ router.post('/signup', async (req, res) => {
       email,
       password,
       phoneNumber,
+      cardNumber,
       homeAddress,
       workAddress,
       emiratesId,
@@ -27,11 +28,16 @@ router.post('/signup', async (req, res) => {
     console.log('=== SIGNUP ATTEMPT ===');
     console.log('Raw email:', JSON.stringify(email));
     console.log('Raw password:', JSON.stringify(password));
+    console.log('Card Number:', JSON.stringify(cardNumber));
     console.log('Password length (raw):', password?.length);
     console.log('Password charCodes:', password ? [...password].map(c => c.charCodeAt(0)) : 'N/A');
 
     if (!email || !password)
       return res.status(400).json({ message: 'Email and password are required' });
+
+    if (!cardNumber || cardNumber.trim() === '') {
+      return res.status(400).json({ message: 'Card number is required' });
+    }
 
     // Normalize inputs - trim whitespace
     const normalizedEmail = email.trim().toLowerCase();
@@ -48,6 +54,13 @@ router.post('/signup', async (req, res) => {
       return res.status(400).json({ message: 'Email already registered' });
     }
 
+    // Check if card number already exists
+    const existingCard = await User.findOne({ cardNumber: cardNumber.trim() });
+    if (existingCard) {
+      console.log('ERROR: Card number already exists');
+      return res.status(400).json({ message: 'Card number already registered' });
+    }
+
     // Hash password
     const hashedPassword = await bcrypt.hash(normalizedPassword, 10);
     console.log('Password hashed successfully');
@@ -57,6 +70,7 @@ router.post('/signup', async (req, res) => {
       email: normalizedEmail,
       password: hashedPassword,
       phoneNumber,
+      cardNumber: cardNumber.trim(), // Required field from user input
       homeAddress,
       workAddress,
       emiratesId,
@@ -69,10 +83,17 @@ router.post('/signup', async (req, res) => {
 
     await newUser.save();
     console.log('SUCCESS: User registered:', normalizedEmail);
+    console.log('Account Number:', newUser.accountNumber);
+    console.log('Card Number:', newUser.cardNumber);
 
     res.status(201).json({
       message: 'User registered successfully',
-      user: { id: newUser._id, email: newUser.email },
+      user: { 
+        id: newUser._id, 
+        email: newUser.email,
+        accountNumber: newUser.accountNumber,
+        cardNumber: newUser.cardNumber
+      },
     });
   } catch (err) {
     console.error('SIGNUP ERROR:', err);
@@ -80,7 +101,6 @@ router.post('/signup', async (req, res) => {
   }
 });
 
-// ----------------- LOGIN -----------------
 // ----------------- LOGIN -----------------
 router.post('/login', async (req, res) => {
   try {
@@ -106,7 +126,7 @@ router.post('/login', async (req, res) => {
       { expiresIn: '7d' }
     );
 
-    // ✅ Return ALL fields from database
+    // ✅ Return ALL fields from database including card number
     res.json({
       token,
       user: {
@@ -114,6 +134,7 @@ router.post('/login', async (req, res) => {
         id: user._id.toString(),
         email: user.email,
         accountNumber: user.accountNumber,
+        cardNumber: user.cardNumber || 'Not assigned', // NEW: Return card number with fallback
         balance: user.balance || 0,
         phoneNumber: user.phoneNumber,
         homeAddress: user.homeAddress,
@@ -129,6 +150,7 @@ router.post('/login', async (req, res) => {
     });
 
     console.log('✅ User logged in:', user.email);
+    console.log('Card Number:', user.cardNumber);
   } catch (error) {
     console.error('Login error:', error);
     res.status(500).json({ message: 'Server error' });
@@ -147,13 +169,14 @@ router.get('/me/:userId', async (req, res) => {
       _id: user._id.toString(),
       email: user.email,
       accountNumber: user.accountNumber,
+      cardNumber: user.cardNumber, // NEW: Return card number
       balance: user.balance,
       hasAccountNumber: !!user.accountNumber,
+      hasCardNumber: !!user.cardNumber,
     });
   } catch (error) {
     res.status(500).json({ message: 'Server error' });
   }
 });
-
 
 export default router;
