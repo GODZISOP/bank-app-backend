@@ -418,6 +418,9 @@ router.post('/add-funds', async (req, res) => {
 });
 
 // ✅ Transfer with OTP verification
+// Fix for the transfer endpoint in wallet.js
+
+// ✅ Transfer with OTP verification - FIXED VERSION
 router.post('/transfer', async (req, res) => {
   let session = null;
   
@@ -430,7 +433,8 @@ router.post('/transfer', async (req, res) => {
       recipientName,
       swiftCode,
       ibanNumber,
-      otpKey
+      otpKey,
+      otp  // ADD THIS - was missing!
     } = req.body;
     
     const amountNum = Number(amount);
@@ -440,37 +444,89 @@ router.post('/transfer', async (req, res) => {
       from: fromUserId,
       to: toAccountNumber,
       amount: amountNum,
-      otpKey: otpKey ? '✓' : '✗'
+      otpKey: otpKey ? '✓' : '✗',
+      otp: otp ? '✓' : '✗'  // ADD THIS
     });
 
     // Validation
     if (!fromUserId || !toAccountNumber || !amountNum) {
-      return res.status(400).json({ message: 'All fields are required' });
+      return res.status(400).json({ 
+        success: false,
+        message: 'All fields are required' 
+      });
     }
 
-    if (!otpKey) {
-      return res.status(400).json({ message: 'OTP verification required' });
+    if (!otpKey || !otp) {  // FIXED: Check for both otpKey AND otp
+      return res.status(400).json({ 
+        success: false,
+        message: 'OTP verification required' 
+      });
     }
 
     if (!recipientName) {
-      return res.status(400).json({ message: 'Recipient name is required' });
+      return res.status(400).json({ 
+        success: false,
+        message: 'Recipient name is required' 
+      });
     }
 
     if (amountNum <= 0) {
-      return res.status(400).json({ message: 'Amount must be greater than 0' });
+      return res.status(400).json({ 
+        success: false,
+        message: 'Amount must be greater than 0' 
+      });
     }
 
-    // Verify OTP
+    // FIXED: Verify OTP properly
     const otpData = otpStore.get(otpKey);
-    if (!otpData || otpData.userId !== fromUserId) {
-      return res.status(401).json({ message: 'OTP verification failed' });
+    
+    if (!otpData) {
+      console.log('❌ OTP key not found:', otpKey);
+      console.log('Available OTP keys:', Array.from(otpStore.keys()));
+      return res.status(401).json({ 
+        success: false,
+        message: 'OTP session expired. Please request a new OTP.',
+        expired: true 
+      });
     }
 
-    // Delete OTP after verification
+    if (otpData.userId !== fromUserId) {
+      return res.status(401).json({ 
+        success: false,
+        message: 'OTP verification failed - user mismatch' 
+      });
+    }
+
+    // Check expiry
+    if (Date.now() > otpData.expiresAt) {
+      otpStore.delete(otpKey);
+      return res.status(401).json({ 
+        success: false,
+        message: 'OTP has expired',
+        expired: true 
+      });
+    }
+
+    // FIXED: Verify OTP code
+    if (otpData.otp !== otp.toString()) {
+      console.log('❌ OTP mismatch:', { expected: otpData.otp, received: otp });
+      return res.status(401).json({ 
+        success: false,
+        message: 'Invalid OTP code',
+        expired: false 
+      });
+    }
+
+    console.log('✅ OTP verified successfully');
+    
+    // Delete OTP after successful verification
     otpStore.delete(otpKey);
 
     if (transferType === 'international' && !swiftCode?.trim()) {
-      return res.status(400).json({ message: 'SWIFT code is required for international transfers' });
+      return res.status(400).json({ 
+        success: false,
+        message: 'SWIFT code is required for international transfers' 
+      });
     }
 
     session = await mongoose.startSession();
@@ -479,12 +535,16 @@ router.post('/transfer', async (req, res) => {
     const sender = await User.findById(fromUserId).session(session);
     if (!sender) {
       await session.abortTransaction();
-      return res.status(404).json({ message: 'Sender not found' });
+      return res.status(404).json({ 
+        success: false,
+        message: 'Sender not found' 
+      });
     }
 
     if ((sender.balance || 0) < amountNum) {
       await session.abortTransaction();
       return res.status(400).json({ 
+        success: false,
         message: 'Insufficient balance',
         currentBalance: sender.balance || 0,
         required: amountNum
@@ -496,12 +556,18 @@ router.post('/transfer', async (req, res) => {
       
       if (!recipient) {
         await session.abortTransaction();
-        return res.status(404).json({ message: 'Recipient account not found' });
+        return res.status(404).json({ 
+          success: false,
+          message: 'Recipient account not found' 
+        });
       }
 
       if (sender._id.equals(recipient._id)) {
         await session.abortTransaction();
-        return res.status(400).json({ message: 'Cannot transfer to your own account' });
+        return res.status(400).json({ 
+          success: false,
+          message: 'Cannot transfer to your own account' 
+        });
       }
 
       sender.balance = (sender.balance || 0) - amountNum;
@@ -549,6 +615,7 @@ router.post('/transfer', async (req, res) => {
       });
 
     } else {
+      // International transfer
       const estimatedCompletion = new Date();
       estimatedCompletion.setDate(estimatedCompletion.getDate() + 2);
 
@@ -597,7 +664,13 @@ router.post('/transfer', async (req, res) => {
       await session.abortTransaction();
     }
     console.error('❌ Transfer error:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
+    console.error('Error stack:', error.stack);  // ADD THIS for better debugging
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error', 
+      error: error.message,
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   } finally {
     if (session) {
       session.endSession();
