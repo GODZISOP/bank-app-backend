@@ -47,7 +47,7 @@ const userSchema = new mongoose.Schema(
     salary: String,
     balance: { type: Number, default: 0 },
     accountNumber: { type: String, unique: true },
-    cardNumber: { type: String, required: true, unique: true }, // Required field
+cardNumber: { type: String, unique: true, sparse: true },
     transactions: [transactionSchema],
   },
   { timestamps: true }
