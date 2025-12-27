@@ -46,57 +46,16 @@ const userSchema = new mongoose.Schema(
     employerName: String,
     salary: String,
     balance: { type: Number, default: 0 },
-    accountNumber: { type: String, unique: true },
-cardNumber: { type: String, unique: true, sparse: true },
+    accountNumber: { type: String, required: true, unique: true }, // Required and unique
+    cardNumber: { type: String, required: true, unique: true }, // Required and unique
     transactions: [transactionSchema],
   },
   { timestamps: true }
 );
 
-// Generate account number and card number before saving
-userSchema.pre('save', async function (next) {
-  // Only generate account number if it doesn't exist
-  if (!this.accountNumber) {
-    this.accountNumber = generateAccountNumber();
-  }
-  
-  // Only generate card number if it doesn't exist
-  if (!this.cardNumber) {
-    this.cardNumber = generateCardNumber();
-  }
-  
-  next();
-});
-
 // Compare password method
 userSchema.methods.comparePassword = async function (candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.password);
 };
-
-// Helper function to generate realistic account number
-function generateAccountNumber() {
-  // Example format: AE12 3456 7890 123456
-  return (
-    'AE' +
-    Math.floor(10 + Math.random() * 89) +
-    ' ' +
-    Math.floor(1000 + Math.random() * 9000) +
-    ' ' +
-    Math.floor(1000 + Math.random() * 9000) +
-    ' ' +
-    Math.floor(100000 + Math.random() * 900000)
-  );
-}
-
-// Helper function to generate realistic card number
-function generateCardNumber() {
-  // Example format: 1784 3510 0008 4859 (16 digits)
-  const firstGroup = Math.floor(1000 + Math.random() * 9000); // 4 digits starting with 1-9
-  const secondGroup = Math.floor(1000 + Math.random() * 9000); // 4 digits
-  const thirdGroup = Math.floor(1000 + Math.random() * 9000); // 4 digits
-  const fourthGroup = Math.floor(1000 + Math.random() * 9000); // 4 digits
-  
-  return `${firstGroup} ${secondGroup} ${thirdGroup} ${fourthGroup}`;
-}
 
 export default mongoose.model('User', userSchema);

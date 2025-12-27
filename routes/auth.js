@@ -14,6 +14,7 @@ router.post('/signup', async (req, res) => {
       email,
       password,
       phoneNumber,
+      accountNumber, // Accept account number from user
       cardNumber,
       homeAddress,
       workAddress,
@@ -27,13 +28,17 @@ router.post('/signup', async (req, res) => {
 
     console.log('=== SIGNUP ATTEMPT ===');
     console.log('Raw email:', JSON.stringify(email));
-    console.log('Raw password:', JSON.stringify(password));
+    console.log('Account Number:', JSON.stringify(accountNumber));
     console.log('Card Number:', JSON.stringify(cardNumber));
-    console.log('Password length (raw):', password?.length);
-    console.log('Password charCodes:', password ? [...password].map(c => c.charCodeAt(0)) : 'N/A');
 
-    if (!email || !password)
+    // Validate required fields
+    if (!email || !password) {
       return res.status(400).json({ message: 'Email and password are required' });
+    }
+
+    if (!accountNumber || accountNumber.trim() === '') {
+      return res.status(400).json({ message: 'Account number is required' });
+    }
 
     if (!cardNumber || cardNumber.trim() === '') {
       return res.status(400).json({ message: 'Card number is required' });
@@ -42,20 +47,29 @@ router.post('/signup', async (req, res) => {
     // Normalize inputs - trim whitespace
     const normalizedEmail = email.trim().toLowerCase();
     const normalizedPassword = password.trim();
+    const normalizedAccountNumber = accountNumber.trim();
+    const normalizedCardNumber = cardNumber.trim();
 
     console.log('Normalized email:', JSON.stringify(normalizedEmail));
-    console.log('Normalized password:', JSON.stringify(normalizedPassword));
-    console.log('Normalized password length:', normalizedPassword.length);
-    console.log('Normalized password charCodes:', [...normalizedPassword].map(c => c.charCodeAt(0)));
+    console.log('Normalized account number:', JSON.stringify(normalizedAccountNumber));
+    console.log('Normalized card number:', JSON.stringify(normalizedCardNumber));
 
+    // Check if email already exists
     const existingUser = await User.findOne({ email: normalizedEmail });
     if (existingUser) {
       console.log('ERROR: Email already exists');
       return res.status(400).json({ message: 'Email already registered' });
     }
 
+    // Check if account number already exists
+    const existingAccount = await User.findOne({ accountNumber: normalizedAccountNumber });
+    if (existingAccount) {
+      console.log('ERROR: Account number already exists');
+      return res.status(400).json({ message: 'Account number already registered' });
+    }
+
     // Check if card number already exists
-    const existingCard = await User.findOne({ cardNumber: cardNumber.trim() });
+    const existingCard = await User.findOne({ cardNumber: normalizedCardNumber });
     if (existingCard) {
       console.log('ERROR: Card number already exists');
       return res.status(400).json({ message: 'Card number already registered' });
@@ -64,13 +78,13 @@ router.post('/signup', async (req, res) => {
     // Hash password
     const hashedPassword = await bcrypt.hash(normalizedPassword, 10);
     console.log('Password hashed successfully');
-    console.log('Hash (first 60 chars):', hashedPassword.substring(0, 60));
 
     const newUser = new User({
       email: normalizedEmail,
       password: hashedPassword,
       phoneNumber,
-      cardNumber: cardNumber.trim(), // Required field from user input
+      accountNumber: normalizedAccountNumber, // User-provided account number
+      cardNumber: normalizedCardNumber, // User-provided card number
       homeAddress,
       workAddress,
       emiratesId,
@@ -126,7 +140,6 @@ router.post('/login', async (req, res) => {
       { expiresIn: '7d' }
     );
 
-    // ✅ Return ALL fields from database including card number
     res.json({
       token,
       user: {
@@ -134,7 +147,7 @@ router.post('/login', async (req, res) => {
         id: user._id.toString(),
         email: user.email,
         accountNumber: user.accountNumber,
-        cardNumber: user.cardNumber || 'Not assigned', // NEW: Return card number with fallback
+        cardNumber: user.cardNumber,
         balance: user.balance || 0,
         phoneNumber: user.phoneNumber,
         homeAddress: user.homeAddress,
@@ -150,6 +163,7 @@ router.post('/login', async (req, res) => {
     });
 
     console.log('✅ User logged in:', user.email);
+    console.log('Account Number:', user.accountNumber);
     console.log('Card Number:', user.cardNumber);
   } catch (error) {
     console.error('Login error:', error);
@@ -169,7 +183,7 @@ router.get('/me/:userId', async (req, res) => {
       _id: user._id.toString(),
       email: user.email,
       accountNumber: user.accountNumber,
-      cardNumber: user.cardNumber, // NEW: Return card number
+      cardNumber: user.cardNumber,
       balance: user.balance,
       hasAccountNumber: !!user.accountNumber,
       hasCardNumber: !!user.cardNumber,
