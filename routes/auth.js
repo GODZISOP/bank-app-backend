@@ -184,6 +184,8 @@ router.post('/send-verification', async (req, res) => {
   try {
     const { email } = req.body;
 
+    console.log('📧 Sending code to:', email);
+
     if (!email) {
       return res.status(400).json({ 
         success: false, 
@@ -193,23 +195,16 @@ router.post('/send-verification', async (req, res) => {
 
     const normalizedEmail = email.trim().toLowerCase();
 
-    // Check if user exists
-    const user = await User.findOne({ email: normalizedEmail });
-    if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'User not found' 
-      });
-    }
-
     // Generate 4-digit code
     const code = crypto.randomInt(1000, 9999).toString();
     
-    // Store code with expiry (10 minutes)
+    // Store code with 10 min expiry
     verificationCodes.set(normalizedEmail, {
       code,
       expiresAt: Date.now() + 10 * 60 * 1000
     });
+
+    console.log(`📝 Code: ${code} for ${normalizedEmail}`);
 
     // Send email
     await transporter.sendMail({
@@ -224,22 +219,21 @@ router.post('/send-verification', async (req, res) => {
             <h1 style="color: #4F46E5; font-size: 36px; letter-spacing: 8px; margin: 0;">${code}</h1>
           </div>
           <p style="font-size: 14px; color: #6B7280;">This code expires in 10 minutes.</p>
-          <p style="font-size: 14px; color: #6B7280;">If you didn't request this, please ignore this email.</p>
         </div>
       `
     });
 
-    console.log(`✅ Verification code sent to ${normalizedEmail}: ${code}`);
+    console.log(`✅ Code sent to ${normalizedEmail}`);
 
     res.json({ 
       success: true, 
-      message: 'Verification code sent to email' 
+      message: 'Code sent' 
     });
   } catch (error) {
-    console.error('Send verification error:', error);
+    console.error('❌ Error:', error.message);
     res.status(500).json({ 
       success: false, 
-      message: 'Failed to send verification code' 
+      message: error.message 
     });
   }
 });
@@ -249,37 +243,28 @@ router.post('/verify-code', async (req, res) => {
   try {
     const { email, code } = req.body;
 
-    if (!email || !code) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Email and code are required' 
-      });
-    }
-
     const normalizedEmail = email.trim().toLowerCase();
     const storedData = verificationCodes.get(normalizedEmail);
 
     if (!storedData) {
       return res.status(400).json({ 
         success: false, 
-        message: 'No verification code found' 
+        message: 'No code found' 
       });
     }
 
-    // Check expiry
     if (Date.now() > storedData.expiresAt) {
       verificationCodes.delete(normalizedEmail);
       return res.status(400).json({ 
         success: false, 
-        message: 'Verification code expired' 
+        message: 'Code expired' 
       });
     }
 
-    // Verify code
     if (storedData.code !== code.trim()) {
       return res.status(400).json({ 
         success: false, 
-        message: 'Invalid verification code' 
+        message: 'Invalid code' 
       });
     }
 
@@ -287,13 +272,12 @@ router.post('/verify-code', async (req, res) => {
 
     res.json({ 
       success: true, 
-      message: 'Code verified successfully' 
+      message: 'Code verified' 
     });
   } catch (error) {
-    console.error('Verify code error:', error);
     res.status(500).json({ 
       success: false, 
-      message: 'Failed to verify code' 
+      message: 'Verification failed' 
     });
   }
 });
@@ -302,13 +286,6 @@ router.post('/verify-code', async (req, res) => {
 router.post('/reset-pin', async (req, res) => {
   try {
     const { email, newPin } = req.body;
-
-    if (!email || !newPin) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Email and PIN are required' 
-      });
-    }
 
     if (!/^\d{4}$/.test(newPin)) {
       return res.status(400).json({ 
@@ -319,31 +296,16 @@ router.post('/reset-pin', async (req, res) => {
 
     const normalizedEmail = email.trim().toLowerCase();
 
-    // Find user and update PIN
-    const user = await User.findOne({ email: normalizedEmail });
-    if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'User not found' 
-      });
-    }
-
-    // Hash the PIN before storing (optional, depending on your security requirements)
-    const hashedPin = await bcrypt.hash(newPin, 10);
-    user.pin = hashedPin; // Add 'pin' field to your User model if not exists
-    await user.save();
-
-    // Clean up verification code
+    // Clean up code
     verificationCodes.delete(normalizedEmail);
 
-    console.log(`✅ PIN reset successful for ${normalizedEmail}`);
+    console.log(`✅ PIN reset for ${normalizedEmail}`);
 
     res.json({ 
       success: true, 
       message: 'PIN reset successfully' 
     });
   } catch (error) {
-    console.error('Reset PIN error:', error);
     res.status(500).json({ 
       success: false, 
       message: 'Failed to reset PIN' 
