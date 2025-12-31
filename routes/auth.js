@@ -13,10 +13,11 @@ const JWT_SECRET = process.env.JWT_SECRET || 'your_secret_here';
 const transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
+    user: process.env.EMAIL_USER,        // already in your .env
+    pass: process.env.EMAIL_PASSWORD,    // <-- use EMAIL_PASSWORD, not EMAIL_PASS
   }
 });
+
 
 // Temporary storage for verification codes (use Redis in production)
 const verificationCodes = new Map();
