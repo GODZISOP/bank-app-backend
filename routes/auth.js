@@ -180,6 +180,176 @@ router.post('/login', async (req, res) => {
 });
 
 // ----------------- SEND VERIFICATION CODE -----------------
+router.post('/send-verification', async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Email is required' 
+      });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    // Check if user exists
+    const user = await User.findOne({ email: normalizedEmail });
+    if (!user) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'User not found' 
+      });
+    }
+
+    // Generate 4-digit code
+    const code = crypto.randomInt(1000, 9999).toString();
+    
+    // Store code with expiry (10 minutes)
+    verificationCodes.set(normalizedEmail, {
+      code,
+      expiresAt: Date.now() + 10 * 60 * 1000
+    });
+
+    // Send email
+    await transporter.sendMail({
+      from: process.env.EMAIL_USER,
+      to: normalizedEmail,
+      subject: 'PIN Reset Verification Code',
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #4F46E5;">PIN Reset Request</h2>
+          <p style="font-size: 16px; color: #6B7280;">Your verification code is:</p>
+          <div style="background: #F3F4F6; padding: 20px; border-radius: 10px; text-align: center; margin: 20px 0;">
+            <h1 style="color: #4F46E5; font-size: 36px; letter-spacing: 8px; margin: 0;">${code}</h1>
+          </div>
+          <p style="font-size: 14px; color: #6B7280;">This code expires in 10 minutes.</p>
+          <p style="font-size: 14px; color: #6B7280;">If you didn't request this, please ignore this email.</p>
+        </div>
+      `
+    });
+
+    console.log(`✅ Verification code sent to ${normalizedEmail}: ${code}`);
+
+    res.json({ 
+      success: true, 
+      message: 'Verification code sent to email' 
+    });
+  } catch (error) {
+    console.error('Send verification error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to send verification code' 
+    });
+  }
+});
+
+// ----------------- VERIFY CODE -----------------
+router.post('/verify-code', async (req, res) => {
+  try {
+    const { email, code } = req.body;
+
+    if (!email || !code) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Email and code are required' 
+      });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const storedData = verificationCodes.get(normalizedEmail);
+
+    if (!storedData) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'No verification code found' 
+      });
+    }
+
+    // Check expiry
+    if (Date.now() > storedData.expiresAt) {
+      verificationCodes.delete(normalizedEmail);
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Verification code expired' 
+      });
+    }
+
+    // Verify code
+    if (storedData.code !== code.trim()) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid verification code' 
+      });
+    }
+
+    console.log(`✅ Code verified for ${normalizedEmail}`);
+
+    res.json({ 
+      success: true, 
+      message: 'Code verified successfully' 
+    });
+  } catch (error) {
+    console.error('Verify code error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to verify code' 
+    });
+  }
+});
+
+// ----------------- RESET PIN -----------------
+router.post('/reset-pin', async (req, res) => {
+  try {
+    const { email, newPin } = req.body;
+
+    if (!email || !newPin) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Email and PIN are required' 
+      });
+    }
+
+    if (!/^\d{4}$/.test(newPin)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'PIN must be 4 digits' 
+      });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    // Find user and update PIN
+    const user = await User.findOne({ email: normalizedEmail });
+    if (!user) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'User not found' 
+      });
+    }
+
+    // Hash the PIN before storing (optional, depending on your security requirements)
+    const hashedPin = await bcrypt.hash(newPin, 10);
+    user.pin = hashedPin; // Add 'pin' field to your User model if not exists
+    await user.save();
+
+    // Clean up verification code
+    verificationCodes.delete(normalizedEmail);
+
+    console.log(`✅ PIN reset successful for ${normalizedEmail}`);
+
+    res.json({ 
+      success: true, 
+      message: 'PIN reset successfully' 
+    });
+  } catch (error) {
+    console.error('Reset PIN error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to reset PIN' 
+    });
+  }
+});
 
 // DEBUG: Get user info (remove in production)
 router.get('/me/:userId', async (req, res) => {
@@ -200,140 +370,6 @@ router.get('/me/:userId', async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ message: 'Server error' });
-  }
-});
-
-
-router.post('/send-verification', async (req, res) => {
-  try {
-    const { email } = req.body;
-
-    console.log('📧 Sending code to:', email);
-
-    if (!email) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Email is required' 
-      });
-    }
-
-    const normalizedEmail = email.trim().toLowerCase();
-
-    // Generate 4-digit code
-    const code = crypto.randomInt(1000, 9999).toString();
-    
-    // Store code with 10 min expiry
-    verificationCodes.set(normalizedEmail, {
-      code,
-      expiresAt: Date.now() + 10 * 60 * 1000
-    });
-
-    console.log(`📝 Code: ${code} for ${normalizedEmail}`);
-
-    // Send email
-    await transporter.sendMail({
-      from: process.env.EMAIL_USER,
-      to: normalizedEmail,
-      subject: 'PIN Reset Verification Code',
-      html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h2 style="color: #4F46E5;">PIN Reset Request</h2>
-          <p style="font-size: 16px; color: #6B7280;">Your verification code is:</p>
-          <div style="background: #F3F4F6; padding: 20px; border-radius: 10px; text-align: center; margin: 20px 0;">
-            <h1 style="color: #4F46E5; font-size: 36px; letter-spacing: 8px; margin: 0;">${code}</h1>
-          </div>
-          <p style="font-size: 14px; color: #6B7280;">This code expires in 10 minutes.</p>
-        </div>
-      `
-    });
-
-    console.log(`✅ Code sent to ${normalizedEmail}`);
-
-    res.json({ 
-      success: true, 
-      message: 'Code sent' 
-    });
-  } catch (error) {
-    console.error('❌ Error:', error.message);
-    res.status(500).json({ 
-      success: false, 
-      message: error.message 
-    });
-  }
-});
-
-// ----------------- VERIFY CODE -----------------
-router.post('/verify-code', async (req, res) => {
-  try {
-    const { email, code } = req.body;
-
-    const normalizedEmail = email.trim().toLowerCase();
-    const storedData = verificationCodes.get(normalizedEmail);
-
-    if (!storedData) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'No code found' 
-      });
-    }
-
-    if (Date.now() > storedData.expiresAt) {
-      verificationCodes.delete(normalizedEmail);
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Code expired' 
-      });
-    }
-
-    if (storedData.code !== code.trim()) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Invalid code' 
-      });
-    }
-
-    console.log(`✅ Code verified for ${normalizedEmail}`);
-
-    res.json({ 
-      success: true, 
-      message: 'Code verified' 
-    });
-  } catch (error) {
-    res.status(500).json({ 
-      success: false, 
-      message: 'Verification failed' 
-    });
-  }
-});
-
-// ----------------- RESET PIN -----------------
-router.post('/reset-pin', async (req, res) => {
-  try {
-    const { email, newPin } = req.body;
-
-    if (!/^\d{4}$/.test(newPin)) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'PIN must be 4 digits' 
-      });
-    }
-
-    const normalizedEmail = email.trim().toLowerCase();
-
-    // Clean up code
-    verificationCodes.delete(normalizedEmail);
-
-    console.log(`✅ PIN reset for ${normalizedEmail}`);
-
-    res.json({ 
-      success: true, 
-      message: 'PIN reset successfully' 
-    });
-  } catch (error) {
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to reset PIN' 
-    });
   }
 });
 
