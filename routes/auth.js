@@ -2,10 +2,24 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
+import nodemailer from 'nodemailer';
 import User from '../models/User.js';
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'your_secret_here';
+
+// Email configuration for verification codes
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS
+  }
+});
+
+// Temporary storage for verification codes (use Redis in production)
+const verificationCodes = new Map();
 
 // ----------------- SIGNUP -----------------
 router.post('/signup', async (req, res) => {
@@ -14,7 +28,7 @@ router.post('/signup', async (req, res) => {
       email,
       password,
       phoneNumber,
-      accountNumber, // Accept account number from user
+      accountNumber,
       cardNumber,
       homeAddress,
       workAddress,
@@ -31,7 +45,6 @@ router.post('/signup', async (req, res) => {
     console.log('Account Number:', JSON.stringify(accountNumber));
     console.log('Card Number:', JSON.stringify(cardNumber));
 
-    // Validate required fields
     if (!email || !password) {
       return res.status(400).json({ message: 'Email and password are required' });
     }
@@ -44,7 +57,6 @@ router.post('/signup', async (req, res) => {
       return res.status(400).json({ message: 'Card number is required' });
     }
 
-    // Normalize inputs - trim whitespace
     const normalizedEmail = email.trim().toLowerCase();
     const normalizedPassword = password.trim();
     const normalizedAccountNumber = accountNumber.trim();
@@ -54,28 +66,24 @@ router.post('/signup', async (req, res) => {
     console.log('Normalized account number:', JSON.stringify(normalizedAccountNumber));
     console.log('Normalized card number:', JSON.stringify(normalizedCardNumber));
 
-    // Check if email already exists
     const existingUser = await User.findOne({ email: normalizedEmail });
     if (existingUser) {
       console.log('ERROR: Email already exists');
       return res.status(400).json({ message: 'Email already registered' });
     }
 
-    // Check if account number already exists
     const existingAccount = await User.findOne({ accountNumber: normalizedAccountNumber });
     if (existingAccount) {
       console.log('ERROR: Account number already exists');
       return res.status(400).json({ message: 'Account number already registered' });
     }
 
-    // Check if card number already exists
     const existingCard = await User.findOne({ cardNumber: normalizedCardNumber });
     if (existingCard) {
       console.log('ERROR: Card number already exists');
       return res.status(400).json({ message: 'Card number already registered' });
     }
 
-    // Hash password
     const hashedPassword = await bcrypt.hash(normalizedPassword, 10);
     console.log('Password hashed successfully');
 
@@ -83,8 +91,8 @@ router.post('/signup', async (req, res) => {
       email: normalizedEmail,
       password: hashedPassword,
       phoneNumber,
-      accountNumber: normalizedAccountNumber, // User-provided account number
-      cardNumber: normalizedCardNumber, // User-provided card number
+      accountNumber: normalizedAccountNumber,
+      cardNumber: normalizedCardNumber,
       homeAddress,
       workAddress,
       emiratesId,
@@ -168,6 +176,178 @@ router.post('/login', async (req, res) => {
   } catch (error) {
     console.error('Login error:', error);
     res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// ----------------- SEND VERIFICATION CODE -----------------
+router.post('/send-verification', async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Email is required' 
+      });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    // Check if user exists
+    const user = await User.findOne({ email: normalizedEmail });
+    if (!user) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'User not found' 
+      });
+    }
+
+    // Generate 4-digit code
+    const code = crypto.randomInt(1000, 9999).toString();
+    
+    // Store code with expiry (10 minutes)
+    verificationCodes.set(normalizedEmail, {
+      code,
+      expiresAt: Date.now() + 10 * 60 * 1000
+    });
+
+    // Send email
+    await transporter.sendMail({
+      from: process.env.EMAIL_USER,
+      to: normalizedEmail,
+      subject: 'PIN Reset Verification Code',
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #4F46E5;">PIN Reset Request</h2>
+          <p style="font-size: 16px; color: #6B7280;">Your verification code is:</p>
+          <div style="background: #F3F4F6; padding: 20px; border-radius: 10px; text-align: center; margin: 20px 0;">
+            <h1 style="color: #4F46E5; font-size: 36px; letter-spacing: 8px; margin: 0;">${code}</h1>
+          </div>
+          <p style="font-size: 14px; color: #6B7280;">This code expires in 10 minutes.</p>
+          <p style="font-size: 14px; color: #6B7280;">If you didn't request this, please ignore this email.</p>
+        </div>
+      `
+    });
+
+    console.log(`✅ Verification code sent to ${normalizedEmail}: ${code}`);
+
+    res.json({ 
+      success: true, 
+      message: 'Verification code sent to email' 
+    });
+  } catch (error) {
+    console.error('Send verification error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to send verification code' 
+    });
+  }
+});
+
+// ----------------- VERIFY CODE -----------------
+router.post('/verify-code', async (req, res) => {
+  try {
+    const { email, code } = req.body;
+
+    if (!email || !code) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Email and code are required' 
+      });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const storedData = verificationCodes.get(normalizedEmail);
+
+    if (!storedData) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'No verification code found' 
+      });
+    }
+
+    // Check expiry
+    if (Date.now() > storedData.expiresAt) {
+      verificationCodes.delete(normalizedEmail);
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Verification code expired' 
+      });
+    }
+
+    // Verify code
+    if (storedData.code !== code.trim()) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid verification code' 
+      });
+    }
+
+    console.log(`✅ Code verified for ${normalizedEmail}`);
+
+    res.json({ 
+      success: true, 
+      message: 'Code verified successfully' 
+    });
+  } catch (error) {
+    console.error('Verify code error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to verify code' 
+    });
+  }
+});
+
+// ----------------- RESET PIN -----------------
+router.post('/reset-pin', async (req, res) => {
+  try {
+    const { email, newPin } = req.body;
+
+    if (!email || !newPin) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Email and PIN are required' 
+      });
+    }
+
+    if (!/^\d{4}$/.test(newPin)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'PIN must be 4 digits' 
+      });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    // Find user and update PIN
+    const user = await User.findOne({ email: normalizedEmail });
+    if (!user) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'User not found' 
+      });
+    }
+
+    // Hash the PIN before storing (optional, depending on your security requirements)
+    const hashedPin = await bcrypt.hash(newPin, 10);
+    user.pin = hashedPin; // Add 'pin' field to your User model if not exists
+    await user.save();
+
+    // Clean up verification code
+    verificationCodes.delete(normalizedEmail);
+
+    console.log(`✅ PIN reset successful for ${normalizedEmail}`);
+
+    res.json({ 
+      success: true, 
+      message: 'PIN reset successfully' 
+    });
+  } catch (error) {
+    console.error('Reset PIN error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to reset PIN' 
+    });
   }
 });
 
