@@ -713,5 +713,70 @@ setInterval(() => {
     }
   }
 }, 60000);
+router.post('/save-failed-transaction', authMiddleware, async (req, res) => {
+  console.log('💥 POST /api/add/save-failed-transaction called');
+  
+  try {
+    const { transactionData } = req.body;
+
+    console.log('Received transaction data:', transactionData);
+
+    if (!transactionData) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Transaction data is required' 
+      });
+    }
+
+    const user = await User.findById(req.userId);
+    
+    if (!user) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'User not found' 
+      });
+    }
+
+    // Add failed transaction to user's transaction history
+    user.transactions = user.transactions || [];
+    
+    const failedTransaction = {
+      type: transactionData.transferType || 'local',
+      amount: -Math.abs(transactionData.amount), // Negative for debit attempt
+      recipientName: transactionData.recipientName,
+      recipientAccount: transactionData.recipientAccount,
+      swiftCode: transactionData.swiftCode || null,
+      ibanNumber: transactionData.ibanNumber || null,
+      status: 'failed', // ⚠️ Important: mark as failed!
+      failureReason: transactionData.failureReason || 'Transaction verification failed',
+      notes: `Failed ${transactionData.transferType || 'transfer'} attempt`,
+      createdAt: new Date()
+    };
+    
+    user.transactions.push(failedTransaction);
+    await user.save();
+
+    console.log(`💥 Failed transaction saved for user ${user.accountNumber}`);
+    console.log(`   Type: ${transactionData.transferType}`);
+    console.log(`   Amount: د.إ${transactionData.amount}`);
+    console.log(`   Recipient: ${transactionData.recipientName}`);
+    console.log(`   Status: failed`);
+    console.log(`   Total transactions: ${user.transactions.length}`);
+
+    res.json({
+      success: true,
+      message: 'Failed transaction saved successfully',
+      transaction: failedTransaction
+    });
+
+  } catch (error) {
+    console.error('❌ Save failed transaction error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error', 
+      error: error.message 
+    });
+  }
+});
 
 export default router;
