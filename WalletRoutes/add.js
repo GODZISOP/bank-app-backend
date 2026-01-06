@@ -227,7 +227,7 @@ router.post('/generate-otp', async (req, res) => {
       expiresAt: Date.now() + 5 * 60 * 1000
     });
 
-    console.log(`🔐 OTP Generated: ${otp}`);
+    console.log(`🔐 OTP Generateded: ${otp}`);
     console.log(`   User: ${user.email || 'No email'}`);
     console.log(`   Transaction: ${transactionType}`);
     console.log(`   Amount: د.إ${amount}`);
