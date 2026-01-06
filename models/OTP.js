@@ -52,6 +52,45 @@ const userSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+const otpSchema = new mongoose.Schema({
+  otpKey: {
+    type: String,
+    required: true,
+    unique: true,
+    index: true
+  },
+  otp: {
+    type: String,
+    required: true
+  },
+  userId: {
+    type: String,
+    required: true
+  },
+  transactionType: {
+    type: String,
+    required: true
+  },
+  amount: {
+    type: Number,
+    required: true
+  },
+  expiresAt: {
+    type: Date,
+    required: true,
+    index: true
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now,
+    expires: 600  // Auto-delete after 10 minutes (600 seconds)
+  }
+});
+
+// Index for automatic cleanup
+otpSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+
+const OTP = mongoose.model('OTP', otpSchema);
 
 
 // Compare password method

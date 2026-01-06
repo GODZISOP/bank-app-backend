@@ -1,6 +1,7 @@
-// backend/routes/wallet.js
+// backend/routes/wallet.js - FIXED FOR VERCEL
 import express from 'express';
 import User from '../models/User.js';
+import OTP from '../models/OTP.js';  // ✅ ADD THIS
 import jwt from 'jsonwebtoken';
 import mongoose from 'mongoose';
 import nodemailer from 'nodemailer';
@@ -9,15 +10,16 @@ const router = express.Router();
 
 console.log('✅ Wallet routes loaded');
 
-// Store OTPs temporarily (in production, use Redis)
-const otpStore = new Map();
+// ❌ REMOVE THIS LINE:
+// const otpStore = new Map();
+
+// ✅ Now using MongoDB for OTP storage (works on serverless!)
 
 // Configure email transporter with safety checks
 let transporter = null;
 let emailEnabled = false;
 
 try {
-  // Check if email credentials exist
   if (process.env.EMAIL_USER && process.env.EMAIL_PASSWORD) {
     transporter = nodemailer.createTransport({
       service: 'gmail',
@@ -30,7 +32,6 @@ try {
       }
     });
 
-    // Verify email configuration
     transporter.verify((error, success) => {
       if (error) {
         console.error('❌ Email verification failed:', error.message);
@@ -43,7 +44,6 @@ try {
     });
   } else {
     console.log('⚠️ Email credentials not configured. OTP will work without email.');
-    console.log('   Add EMAIL_USER and EMAIL_PASSWORD to .env to enable emails');
   }
 } catch (error) {
   console.error('❌ Email setup error:', error.message);
@@ -197,7 +197,7 @@ router.get('/balance', authMiddleware, async (req, res) => {
   }
 });
 
-// ✅ Generate OTP for transaction
+// ✅ Generate OTP - FIXED FOR VERCEL
 router.post('/generate-otp', async (req, res) => {
   console.log('🔐 POST /api/add/generate-otp called');
   console.log('Request body:', req.body);
@@ -218,27 +218,28 @@ router.post('/generate-otp', async (req, res) => {
     const otp = generateOTP();
     const otpKey = `${userId}_${Date.now()}`;
     
-    // Store OTP with expiry (5 minutes)
-    otpStore.set(otpKey, {
+    // ✅ Store OTP in DATABASE (not memory!)
+    await OTP.create({
+      otpKey,
       otp,
       userId,
       transactionType,
       amount,
-      expiresAt: Date.now() + 5 * 60 * 1000
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000)
     });
 
-    console.log(`🔐 OTP Generateded: ${otp}`);
+    console.log(`✅ OTP stored in database: ${otpKey}`);
+    console.log(`🔐 OTP Generated: ${otp}`);
     console.log(`   User: ${user.email || 'No email'}`);
     console.log(`   Transaction: ${transactionType}`);
     console.log(`   Amount: د.إ${amount}`);
 
-    // Try to send email (optional - won't fail if email is not configured)
+    // Try to send email
     let emailSent = false;
     if (user.email && emailEnabled) {
       emailSent = await sendOTPEmail(user.email, otp, transactionType, amount);
     }
 
-    // Always return success
     res.json({
       success: true,
       message: emailSent 
@@ -246,8 +247,7 @@ router.post('/generate-otp', async (req, res) => {
         : 'OTP generated (check console)',
       otpKey,
       email: user.email ? user.email.substring(0, 3) + '***' : undefined,
-      // Show OTP in response for testing
-      otp: otp, // Always show OTP for testing
+      otp: otp, // Show OTP for testing
       expiresIn: 300
     });
 
@@ -261,7 +261,7 @@ router.post('/generate-otp', async (req, res) => {
   }
 });
 
-// ✅ Verify OTP
+// ✅ Verify OTP - FIXED FOR VERCEL
 router.post('/verify-otp', async (req, res) => {
   console.log('✅ POST /api/add/verify-otp called');
   
@@ -272,7 +272,8 @@ router.post('/verify-otp', async (req, res) => {
       return res.status(400).json({ message: 'OTP key and code are required' });
     }
 
-    const otpData = otpStore.get(otpKey);
+    // ✅ Get OTP from DATABASE
+    const otpData = await OTP.findOne({ otpKey });
 
     if (!otpData) {
       return res.status(400).json({ 
@@ -282,8 +283,8 @@ router.post('/verify-otp', async (req, res) => {
     }
 
     // Check expiry
-    if (Date.now() > otpData.expiresAt) {
-      otpStore.delete(otpKey);
+    if (Date.now() > otpData.expiresAt.getTime()) {
+      await OTP.deleteOne({ otpKey });
       return res.status(400).json({ 
         message: 'OTP has expired',
         expired: true 
@@ -312,8 +313,7 @@ router.post('/verify-otp', async (req, res) => {
   }
 });
 
-// ✅ Add funds with OTP verification
-// ✅ Add funds with OTP verification (combined)
+// ✅ Add funds - FIXED FOR VERCEL
 router.post('/add-funds', async (req, res) => {
   console.log('💰 POST /api/add/add-funds called');
   
@@ -335,12 +335,11 @@ router.post('/add-funds', async (req, res) => {
       return res.status(400).json({ message: 'Invalid amount' });
     }
 
-    // Verify OTP
-    const otpData = otpStore.get(otpKey);
+    // ✅ Get OTP from DATABASE
+    const otpData = await OTP.findOne({ otpKey });
     
     if (!otpData) {
-      console.log('❌ OTP key not found:', otpKey);
-      console.log('Available keys:', Array.from(otpStore.keys()));
+      console.log('❌ OTP not found in database:', otpKey);
       return res.status(401).json({ 
         message: 'OTP session expired. Please request a new OTP.',
         expired: true 
@@ -352,8 +351,8 @@ router.post('/add-funds', async (req, res) => {
     }
 
     // Check expiry
-    if (Date.now() > otpData.expiresAt) {
-      otpStore.delete(otpKey);
+    if (Date.now() > otpData.expiresAt.getTime()) {
+      await OTP.deleteOne({ otpKey });
       return res.status(401).json({ 
         message: 'OTP has expired',
         expired: true 
@@ -368,9 +367,9 @@ router.post('/add-funds', async (req, res) => {
       });
     }
 
-    // OTP verified, delete it
-    otpStore.delete(otpKey);
-    console.log('✅ OTP verified successfully');
+    // ✅ OTP verified, delete it
+    await OTP.deleteOne({ otpKey });
+    console.log('✅ OTP verified and deleted');
 
     session = await mongoose.startSession();
     session.startTransaction();
@@ -409,7 +408,7 @@ router.post('/add-funds', async (req, res) => {
       await session.abortTransaction();
     }
     console.error('Add funds error:', error);
-    res.status(500).json({ message: 'Server errorr', error: error.message });
+    res.status(500).json({ message: 'Server error', error: error.message });
   } finally {
     if (session) {
       session.endSession();
@@ -417,10 +416,7 @@ router.post('/add-funds', async (req, res) => {
   }
 });
 
-// ✅ Transfer with OTP verification
-// Fix for the transfer endpoint in wallet.js
-
-// ✅ Transfer with OTP verification - FIXED VERSION
+// ✅ Transfer - FIXED FOR VERCEL
 router.post('/transfer', async (req, res) => {
   let session = null;
   
@@ -434,7 +430,7 @@ router.post('/transfer', async (req, res) => {
       swiftCode,
       ibanNumber,
       otpKey,
-      otp  // ADD THIS - was missing!
+      otp
     } = req.body;
     
     const amountNum = Number(amount);
@@ -445,7 +441,7 @@ router.post('/transfer', async (req, res) => {
       to: toAccountNumber,
       amount: amountNum,
       otpKey: otpKey ? '✓' : '✗',
-      otp: otp ? '✓' : '✗'  // ADD THIS
+      otp: otp ? '✓' : '✗'
     });
 
     // Validation
@@ -456,7 +452,7 @@ router.post('/transfer', async (req, res) => {
       });
     }
 
-    if (!otpKey || !otp) {  // FIXED: Check for both otpKey AND otp
+    if (!otpKey || !otp) {
       return res.status(400).json({ 
         success: false,
         message: 'OTP verification required' 
@@ -477,12 +473,11 @@ router.post('/transfer', async (req, res) => {
       });
     }
 
-    // FIXED: Verify OTP properly
-    const otpData = otpStore.get(otpKey);
+    // ✅ Get OTP from DATABASE
+    const otpData = await OTP.findOne({ otpKey });
     
     if (!otpData) {
-      console.log('❌ OTP key not found:', otpKey);
-      console.log('Available OTP keys:', Array.from(otpStore.keys()));
+      console.log('❌ OTP not found in database:', otpKey);
       return res.status(401).json({ 
         success: false,
         message: 'OTP session expired. Please request a new OTP.',
@@ -498,8 +493,8 @@ router.post('/transfer', async (req, res) => {
     }
 
     // Check expiry
-    if (Date.now() > otpData.expiresAt) {
-      otpStore.delete(otpKey);
+    if (Date.now() > otpData.expiresAt.getTime()) {
+      await OTP.deleteOne({ otpKey });
       return res.status(401).json({ 
         success: false,
         message: 'OTP has expired',
@@ -507,7 +502,7 @@ router.post('/transfer', async (req, res) => {
       });
     }
 
-    // FIXED: Verify OTP code
+    // Verify OTP code
     if (otpData.otp !== otp.toString()) {
       console.log('❌ OTP mismatch:', { expected: otpData.otp, received: otp });
       return res.status(401).json({ 
@@ -519,8 +514,8 @@ router.post('/transfer', async (req, res) => {
 
     console.log('✅ OTP verified successfully');
     
-    // Delete OTP after successful verification
-    otpStore.delete(otpKey);
+    // ✅ Delete OTP after verification
+    await OTP.deleteOne({ otpKey });
 
     if (transferType === 'international' && !swiftCode?.trim()) {
       return res.status(400).json({ 
@@ -664,7 +659,7 @@ router.post('/transfer', async (req, res) => {
       await session.abortTransaction();
     }
     console.error('❌ Transfer error:', error);
-    console.error('Error stack:', error.stack);  // ADD THIS for better debugging
+    console.error('Error stack:', error.stack);
     res.status(500).json({ 
       success: false,
       message: 'Server error', 
@@ -703,23 +698,12 @@ router.get('/transactions', authMiddleware, async (req, res) => {
   }
 });
 
-// Clean up expired OTPs
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, value] of otpStore.entries()) {
-    if (now > value.expiresAt) {
-      otpStore.delete(key);
-      console.log(`🗑️ Expired OTP cleaned: ${key}`);
-    }
-  }
-}, 60000);
+// Save failed transaction
 router.post('/save-failed-transaction', authMiddleware, async (req, res) => {
   console.log('💥 POST /api/add/save-failed-transaction called');
   
   try {
     const { transactionData } = req.body;
-
-    console.log('Received transaction data:', transactionData);
 
     if (!transactionData) {
       return res.status(400).json({ 
@@ -737,17 +721,16 @@ router.post('/save-failed-transaction', authMiddleware, async (req, res) => {
       });
     }
 
-    // Add failed transaction to user's transaction history
     user.transactions = user.transactions || [];
     
     const failedTransaction = {
       type: transactionData.transferType || 'local',
-      amount: -Math.abs(transactionData.amount), // Negative for debit attempt
+      amount: -Math.abs(transactionData.amount),
       recipientName: transactionData.recipientName,
       recipientAccount: transactionData.recipientAccount,
       swiftCode: transactionData.swiftCode || null,
       ibanNumber: transactionData.ibanNumber || null,
-      status: 'failed', // ⚠️ Important: mark as failed!
+      status: 'failed',
       failureReason: transactionData.failureReason || 'Transaction verification failed',
       notes: `Failed ${transactionData.transferType || 'transfer'} attempt`,
       createdAt: new Date()
@@ -757,11 +740,6 @@ router.post('/save-failed-transaction', authMiddleware, async (req, res) => {
     await user.save();
 
     console.log(`💥 Failed transaction saved for user ${user.accountNumber}`);
-    console.log(`   Type: ${transactionData.transferType}`);
-    console.log(`   Amount: د.إ${transactionData.amount}`);
-    console.log(`   Recipient: ${transactionData.recipientName}`);
-    console.log(`   Status: failed`);
-    console.log(`   Total transactions: ${user.transactions.length}`);
 
     res.json({
       success: true,
@@ -778,5 +756,8 @@ router.post('/save-failed-transaction', authMiddleware, async (req, res) => {
     });
   }
 });
+
+// ❌ REMOVE THIS - No longer needed with database storage:
+// setInterval(() => { ... }, 60000);
 
 export default router;
