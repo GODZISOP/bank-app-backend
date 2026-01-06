@@ -1,57 +1,6 @@
-// models/User.js
+// backend/models/OTP.js - CREATE THIS NEW FILE
 import mongoose from 'mongoose';
-import bcrypt from 'bcryptjs';
 
-// Transaction Schema for storing transaction history
-const transactionSchema = new mongoose.Schema({
-  type: {
-    type: String,
-    enum: ['local', 'international', 'add_funds', 'received'],
-    required: true
-  },
-  amount: {
-    type: Number,
-    required: true
-  },
-  recipientName: String,
-  recipientAccount: String,
-  senderName: String,
-  senderAccount: String,
-  swiftCode: String,
-  ibanNumber: String,
-  status: {
-    type: String,
-    enum: ['completed', 'pending', 'failed'],
-    default: 'completed'
-  },
-  estimatedCompletion: Date,
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-  notes: String
-});
-
-const userSchema = new mongoose.Schema(
-  {
-    email: { type: String, required: true, unique: true },
-    password: { type: String, required: true },
-    phoneNumber: String,
-    inviteCode: String,
-    homeAddress: String,
-    workAddress: String,
-    emiratesId: String,
-    passport: String,
-    accountPurpose: String,
-    employerName: String,
-    salary: String,
-    balance: { type: Number, default: 0 },
-    accountNumber: { type: String, required: true, unique: true }, // Required and unique
-    cardNumber: { type: String, required: true, unique: true }, // Required and unique
-    transactions: [transactionSchema],
-  },
-  { timestamps: true }
-);
 const otpSchema = new mongoose.Schema({
   otpKey: {
     type: String,
@@ -65,7 +14,8 @@ const otpSchema = new mongoose.Schema({
   },
   userId: {
     type: String,
-    required: true
+    required: true,
+    index: true
   },
   transactionType: {
     type: String,
@@ -83,19 +33,11 @@ const otpSchema = new mongoose.Schema({
   createdAt: {
     type: Date,
     default: Date.now,
-    expires: 600  // Auto-delete after 10 minutes (600 seconds)
+    expires: 300 // ✅ Changed to 300 seconds (5 minutes)
   }
 });
 
-// Index for automatic cleanup
-otpSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+// MongoDB TTL index
+otpSchema.index({ createdAt: 1 }, { expireAfterSeconds: 300 });
 
-const OTP = mongoose.model('OTP', otpSchema);
-
-
-// Compare password method
-userSchema.methods.comparePassword = async function (candidatePassword) {
-  return await bcrypt.compare(candidatePassword, this.password);
-};
-
-export default mongoose.model('User', userSchema);
+export default mongoose.model('OTP', otpSchema);
