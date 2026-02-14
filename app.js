@@ -1,5 +1,4 @@
-import dotenv from 'dotenv';
-dotenv.config();
+
 
 import express from 'express';
 import cors from 'cors';
@@ -49,5 +48,3 @@ mongoose.connect(process.env.MONGO_URI)
     console.error('❌ MongoDB connection error:', err.message);
     process.exit(1);
   });
-
-export default app;
