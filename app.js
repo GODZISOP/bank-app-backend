@@ -17,7 +17,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/add', WalletRoutes);
 
 // Root route
-app.get('/', (req, res) => {
+asaapp.get('/', (req, res) => {
   res.status(200).json({
     status: 'success',
     message: '✅ Server is running!',
