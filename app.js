@@ -1,5 +1,3 @@
-
-
 import express from 'express';
 import cors from 'cors';
 import mongoose from 'mongoose';
@@ -17,7 +15,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/add', WalletRoutes);
 
 // Root route
-asaapp.get('/', (req, res) => {
+app.get('/', (req, res) => {
   res.status(200).json({
     status: 'success',
     message: '✅ Server is running!',
@@ -35,7 +33,7 @@ if (!process.env.MONGO_URI) {
 
 console.log('🔄 Connecting to MongoDB...');
 
-// MongoDB connection (removed deprecated options)
+// MongoDB connection
 mongoose.connect(process.env.MONGO_URI)
   .then(() => {
     console.log('✅ MongoDB connected');
@@ -48,3 +46,5 @@ mongoose.connect(process.env.MONGO_URI)
     console.error('❌ MongoDB connection error:', err.message);
     process.exit(1);
   });
+
+export default app;
